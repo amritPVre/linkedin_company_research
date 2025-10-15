@@ -7,6 +7,7 @@ import io
 import os
 from typing import List, Dict
 
+import string
 import pandas as pd
 import requests
 import streamlit as st
@@ -90,9 +91,16 @@ with st.form("search-form", clear_on_submit=False):
             help="Matches LinkedIn's public size tags where available.",
         )
     with c4:
-        starts_with = st.text_input("Starts with", max_chars=1, placeholder="A", help="Optional. One letter A–Z.")
+        letter_options = ["All letters (A–Z)"] + list(string.ascii_uppercase)
+        starts_with_choice = st.selectbox(
+            "Starts with",
+            options=letter_options,
+            index=0,
+            help="Pick a specific letter or choose 'All letters (A–Z)' to disable the filter.",
+        )
+        starts_with = "" if starts_with_choice == "All letters (A–Z)" else starts_with_choice
 
-    max_companies = st.slider("Max companies", 5, 200, MAX_COMPANIES_DEFAULT, step=5)
+    max_companies = st.slider("Max companies", 1, 200, MAX_COMPANIES_DEFAULT, step=1)
     submitted = st.form_submit_button("Search Companies 🚀")
 
 # -----------------------------
