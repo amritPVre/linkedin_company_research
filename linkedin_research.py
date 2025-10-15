@@ -4,6 +4,7 @@
 import json
 import re
 import io
+import os
 from typing import List, Dict
 
 import pandas as pd
@@ -11,7 +12,7 @@ import requests
 import streamlit as st
 
 # -----------------------------
-# UI — Sidebar Config
+# Page Config
 # -----------------------------
 st.set_page_config(page_title="LinkedIn Company Finder", page_icon="🔎", layout="wide")
 
@@ -26,29 +27,31 @@ with st.expander("⚠️ Notes & Compliance", expanded=False):
         """
         - This tool searches the open web and **returns links to public LinkedIn *company* pages**.
         - It does **not** log in or scrape behind authentication, and avoids personal profiles.
-        - For production, do **not** hardcode API keys. Use **`st.secrets`** or server-side env vars.
+        - API keys are **loaded from Streamlit Secrets** or environment variables — no key field shown in the UI.
         - Respect LinkedIn terms of service and local regulations. Verify results before outreach.
         """
     )
 
-st.sidebar.header("API & Model Settings")
-api_key = st.sidebar.text_input("OpenRouter API Key", type="password", help="You can paste your key here for testing. For production, use st.secrets['OPENROUTER_API_KEY'].")
-model = st.sidebar.selectbox(
-    "Model",
-    [
-        "deepseek/deepseek-chat-v3.1:online",  # enables OpenRouter web plugin automatically
-        "deepseek/deepseek-r1:online",
-        "openrouter/auto:online",
-    ],
-    help="`:online` suffix activates OpenRouter's Web Search plugin.",
-)
-max_companies = st.sidebar.slider("Max companies", 5, 200, 50, step=5)
-reasoning = st.sidebar.checkbox("Enable DeepSeek reasoning tokens (if supported)", value=True)
+# -----------------------------
+# API & Model Settings (NO UI KEY FIELD)
+# -----------------------------
+# Priority 1: Streamlit secrets; Priority 2: Environment variable
+API_KEY = st.secrets.get("OPENROUTER_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
+MODEL = "deepseek/deepseek-chat-v3.1:online"  # ':online' enables OpenRouter web search
+MAX_COMPANIES_DEFAULT = 50
+ENABLE_REASONING = True  # toggle here if desired
 
-st.sidebar.markdown("---")
-headers = {
-    "Authorization": f"Bearer {api_key}" if api_key else "",
-    "HTTP-Referer": "http://localhost:8501",
+if not API_KEY:
+    st.error(
+        "OpenRouter API key not found. Add it to Streamlit Secrets as `OPENROUTER_API_KEY` "
+        "(or set the environment variable `OPENROUTER_API_KEY`).\n\n"
+        "**Local dev:** create `.streamlit/secrets.toml` with:\n\n"
+        "```toml\nOPENROUTER_API_KEY = \"sk-or-...\"\n```"
+    )
+
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}" if API_KEY else "",
+    "HTTP-Referer": "http://localhost:8501",  # adjust in production
     "X-Title": "LinkedIn Company Finder",
     "Content-Type": "application/json",
 }
@@ -89,6 +92,7 @@ with st.form("search-form", clear_on_submit=False):
     with c4:
         starts_with = st.text_input("Starts with", max_chars=1, placeholder="A", help="Optional. One letter A–Z.")
 
+    max_companies = st.slider("Max companies", 5, 200, MAX_COMPANIES_DEFAULT, step=5)
     submitted = st.form_submit_button("Search Companies 🚀")
 
 # -----------------------------
@@ -154,14 +158,13 @@ def extract_json_array(text: str) -> List[Dict]:
 # Action — Call OpenRouter
 # -----------------------------
 if submitted:
-    if not api_key:
-        st.error("Please paste your OpenRouter API key in the sidebar.")
+    if not API_KEY:
         st.stop()
 
-    user_prompt = build_user_prompt(keywords, location, size, starts_with.upper().strip(), max_companies)
+    user_prompt = build_user_prompt(keywords, location, size, (starts_with or "").upper().strip(), max_companies)
 
     payload = {
-        "model": model,
+        "model": MODEL,
         "messages": [
             {
                 "role": "system",
@@ -172,20 +175,18 @@ if submitted:
             },
             {"role": "user", "content": user_prompt},
         ],
-        # Web search is activated by ':online' suffix in model
         "max_tokens": 2000,
         "temperature": 0.2,
     }
 
-    # Optional DeepSeek reasoning control (if the provider supports it through OpenRouter)
-    if reasoning:
+    if ENABLE_REASONING:
         payload["reasoning"] = {"effort": "medium", "enabled": True}
 
     with st.spinner("Searching the web and compiling companies…"):
         try:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
+                headers=HEADERS,
                 data=json.dumps(payload),
                 timeout=90,
             )
@@ -199,7 +200,6 @@ if submitted:
             try:
                 content = data["choices"][0]["message"]["content"]
             except Exception:
-                # Fallbacks for alpha/other schemas
                 content = (
                     data.get("choices", [{}])[0]
                     .get("messages", [{}])[0]
@@ -245,6 +245,9 @@ if submitted:
 st.markdown(
     """
     ---
-    **Tip:** In production, remove the API key field and read from `st.secrets['OPENROUTER_API_KEY']`.
+    **Setup tip:** For Streamlit Cloud or local dev, put your key in `.streamlit/secrets.toml` as:\n\n
+    ```toml
+    OPENROUTER_API_KEY = "sk-or-..."
+    ```
     """
 )
